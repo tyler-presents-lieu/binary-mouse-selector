@@ -27,7 +27,7 @@
     transition: background-color 0.08s linear, filter 0.08s linear;
   }
 
-  /* Blue = left/top choice, Orange = right/bottom choice */
+  /* Blue = first choice, Orange = second choice, Magenta = third choice */
   .region.blue {
     background: rgba(30, 120, 255, 0.28);
     outline: 2px solid rgba(30, 120, 255, 0.8);
@@ -35,6 +35,10 @@
   .region.orange {
     background: rgba(255, 140, 30, 0.28);
     outline: 2px solid rgba(255, 140, 30, 0.8);
+  }
+  .region.magenta {
+    background: rgba(220, 80, 255, 0.28);
+    outline: 2px solid rgba(220, 80, 255, 0.8);
   }
   .region.dim {
     background: rgba(120, 120, 120, 0.15);
@@ -54,6 +58,7 @@
   }
   .cursor.blue { background: #1e78ff; }
   .cursor.orange { background: #ff8c1e; }
+  .cursor.magenta { background: #dc50ff; }
   .cursor::after {
     content: '';
     position: absolute;
@@ -98,13 +103,13 @@
 
 <main>
   <h1>Binary Mouse Selector — Prototype</h1>
-  <p>Press <b>a</b> to start narrowing in. <b>j</b> = blue, <b>k</b> = orange. Hold <b>Space</b> + j/k to click. <b>Esc</b> to cancel.</p>
+  <p>Press <b>a</b> for two-way narrowing or <b>s</b> for three-way narrowing. Press the active start key again or <b>Esc</b> to cancel. <b>j</b> = blue, <b>k</b> = orange, <b>l</b> = magenta, <b>h</b> = undo. Hold <b>Space</b> + j/k/l to click.</p>
   <p>Click targets below to test the simulated click:</p>
-  <button onclick="alert('Button 1 clicked!')">Button 1</button>
-  <button onclick="alert('Button 2 clicked!')">Button 2</button>
-  <button onclick="alert('Button 3 clicked!')">Button 3</button>
+  <button onclick="showDemoButtonAlert('Button 1', this)">Button 1</button>
+  <button onclick="showDemoButtonAlert('Button 2', this)">Button 2</button>
+  <button onclick="showDemoButtonAlert('Button 3', this)">Button 3</button>
   <p style="margin-top:400px;">More content further down the page…</p>
-  <button onclick="alert('Bottom button clicked!')">Bottom Button</button>
+  <button onclick="showDemoButtonAlert('Bottom button', this)">Bottom Button</button>
 </main>
 
 <div id="overlay"></div>
@@ -120,30 +125,86 @@
   let active = false;          // are we currently narrowing?
   let region = null;           // {x, y, w, h} current bounding region
   let orientation = 'h';       // 'h' = split left/right, 'v' = split top/bottom
+  let selectionMode = 'binary';
   let spaceHeld = false;
   let selectionCount = 0;      // number of j/k narrowing choices made so far
   let lastClickCount = null;   // count reported after most recent simulated click
+  let selectionHistory = [];   // prior regions/orientations for undo
 
-  let blueEl, orangeEl, blueCursor, orangeCursor;
+  const selectionModes = {
+    binary: {
+      startKey: 'a',
+      choices: [
+        { id: 'blue', key: 'j', label: 'blue' },
+        { id: 'orange', key: 'k', label: 'orange' }
+      ]
+    },
+    ternary: {
+      startKey: 's',
+      choices: [
+        { id: 'blue', key: 'j', label: 'blue' },
+        { id: 'orange', key: 'k', label: 'orange' },
+        { id: 'magenta', key: 'l', label: 'magenta' }
+      ]
+    }
+  };
+
+  function currentModeConfig() {
+    return selectionModes[selectionMode];
+  }
+
+  function currentChoices() {
+    return currentModeConfig().choices;
+  }
+
+  function currentNarrowingKeyLabel() {
+    return currentChoices().map((choice) => choice.key).join('/');
+  }
+
+  function currentAxisLabel() {
+    const isTernary = currentChoices().length === 3;
+    if (orientation === 'h') {
+      return isTernary ? 'left / middle / right' : 'left / right';
+    }
+    return isTernary ? 'top / middle / bottom' : 'top / bottom';
+  }
 
   function fullScreenRegion() {
     return { x: 0, y: 0, w: window.innerWidth, h: window.innerHeight };
   }
 
   function splitRegion(r, orient) {
-    if (orient === 'h') {
-      const halfW = r.w / 2;
-      return [
-        { x: r.x, y: r.y, w: halfW, h: r.h },          // blue = left
-        { x: r.x + halfW, y: r.y, w: r.w - halfW, h: r.h } // orange = right
-      ];
-    } else {
+    if (currentChoices().length === 2) {
+      if (orient === 'h') {
+        const halfW = r.w / 2;
+        return [
+          { x: r.x, y: r.y, w: halfW, h: r.h },
+          { x: r.x + halfW, y: r.y, w: r.w - halfW, h: r.h }
+        ];
+      }
+
       const halfH = r.h / 2;
       return [
-        { x: r.x, y: r.y, w: r.w, h: halfH },          // blue = top
-        { x: r.x, y: r.y + halfH, w: r.w, h: r.h - halfH } // orange = bottom
+        { x: r.x, y: r.y, w: r.w, h: halfH },
+        { x: r.x, y: r.y + halfH, w: r.w, h: r.h - halfH }
       ];
     }
+
+    if (orient === 'h') {
+      const thirdW = r.w / 3;
+      return [
+        { x: r.x, y: r.y, w: thirdW, h: r.h },
+        { x: r.x + thirdW, y: r.y, w: thirdW, h: r.h },
+        { x: r.x + (thirdW * 2), y: r.y, w: r.w - (thirdW * 2), h: r.h }
+      ];
+    }
+
+    const thirdH = r.h / 3;
+    return [
+      { x: r.x, y: r.y, w: r.w, h: thirdH },
+      { x: r.x, y: r.y + thirdH, w: r.w, h: thirdH },
+      { x: r.x, y: r.y + (thirdH * 2), w: r.w, h: r.h - (thirdH * 2) }
+    ];
   }
 
   function center(r) {
@@ -152,8 +213,23 @@
 
   function clearOverlay() {
     overlay.innerHTML = '';
-    blueEl = orangeEl = blueCursor = orangeCursor = null;
   }
+
+  window.showDemoButtonAlert = function (label, buttonEl) {
+    const clickDetails = buttonEl._binaryCursorClickDetails;
+    if (clickDetails) {
+      const narrowingLabel = clickDetails.narrowingSelections === 1 ? 'selection' : 'selections';
+      const totalLabel = clickDetails.totalSelections === 1 ? 'selection' : 'selections';
+      alert(
+        `${label} clicked! ` +
+        `Total selections: ${clickDetails.totalSelections} ${totalLabel} ` +
+        `(${clickDetails.narrowingSelections} ${clickDetails.narrowingKeyLabel} narrowing ${narrowingLabel} + 1 final click).`
+      );
+      return;
+    }
+
+    alert(`${label} clicked!`);
+  };
 
   function render() {
     clearOverlay();
@@ -173,44 +249,35 @@
     dimEl.style.height = window.innerHeight + 'px';
     overlay.appendChild(dimEl);
 
-    const [blueRegion, orangeRegion] = splitRegion(region, orientation);
+    const choiceRegions = splitRegion(region, orientation);
+    const choiceCenters = {};
+    const choiceRegionMap = {};
 
-    blueEl = document.createElement('div');
-    blueEl.className = 'region blue';
-    Object.assign(blueEl.style, {
-      left: blueRegion.x + 'px', top: blueRegion.y + 'px',
-      width: blueRegion.w + 'px', height: blueRegion.h + 'px'
+    currentChoices().forEach((choice, index) => {
+      const choiceRegion = choiceRegions[index];
+      const choiceCenter = center(choiceRegion);
+
+      const regionEl = document.createElement('div');
+      regionEl.className = `region ${choice.id}`;
+      Object.assign(regionEl.style, {
+        left: choiceRegion.x + 'px', top: choiceRegion.y + 'px',
+        width: choiceRegion.w + 'px', height: choiceRegion.h + 'px'
+      });
+      overlay.appendChild(regionEl);
+
+      const cursorEl = document.createElement('div');
+      cursorEl.className = `cursor ${choice.id}`;
+      cursorEl.style.left = choiceCenter.x + 'px';
+      cursorEl.style.top = choiceCenter.y + 'px';
+      overlay.appendChild(cursorEl);
+
+      choiceCenters[choice.id] = choiceCenter;
+      choiceRegionMap[choice.id] = choiceRegion;
     });
-    overlay.appendChild(blueEl);
-
-    orangeEl = document.createElement('div');
-    orangeEl.className = 'region orange';
-    Object.assign(orangeEl.style, {
-      left: orangeRegion.x + 'px', top: orangeRegion.y + 'px',
-      width: orangeRegion.w + 'px', height: orangeRegion.h + 'px'
-    });
-    overlay.appendChild(orangeEl);
-
-    const bc = center(blueRegion);
-    const oc = center(orangeRegion);
-
-    blueCursor = document.createElement('div');
-    blueCursor.className = 'cursor blue';
-    blueCursor.style.left = bc.x + 'px';
-    blueCursor.style.top = bc.y + 'px';
-    overlay.appendChild(blueCursor);
-
-    orangeCursor = document.createElement('div');
-    orangeCursor.className = 'cursor orange';
-    orangeCursor.style.left = oc.x + 'px';
-    orangeCursor.style.top = oc.y + 'px';
-    overlay.appendChild(orangeCursor);
 
     // stash for click simulation
-    region._blueCenter = bc;
-    region._orangeCenter = oc;
-    region._blueRegion = blueRegion;
-    region._orangeRegion = orangeRegion;
+    region._choiceCenters = choiceCenters;
+    region._choiceRegions = choiceRegionMap;
 
     updateHud();
   }
@@ -220,27 +287,30 @@
       if (lastClickCount !== null) {
         hud.innerHTML = `
           <div>Last click took <span class="count">${lastClickCount}</span> selection${lastClickCount === 1 ? '' : 's'}.</div>
-          <div>Press <b>a</b> to begin.</div>
+          <div>Press <b>a</b> or <b>s</b> to begin.</div>
         `;
       } else {
-        hud.innerHTML = `<div>Press <b>a</b> to begin.</div>`;
+        hud.innerHTML = `<div>Press <b>a</b> or <b>s</b> to begin.</div>`;
       }
       return;
     }
     hud.innerHTML = `
       <div class="active">Selecting… (<span class="count">${selectionCount}</span> so far)</div>
-      <div><b>j</b> = blue &nbsp; <b>k</b> = orange</div>
-      <div>Split axis: <b>${orientation === 'h' ? 'left / right' : 'top / bottom'}</b></div>
-      <div>Hold <b>Space</b> + j/k to click at cursor</div>
-      <div><b>Esc</b> to cancel</div>
+      <div><b>j</b> = blue &nbsp; <b>k</b> = orange${currentChoices().length === 3 ? ' &nbsp; <b>l</b> = magenta' : ''}</div>
+      <div><b>h</b> = undo last narrowing step</div>
+      <div>Split axis: <b>${currentAxisLabel()}</b></div>
+      <div>Hold <b>Space</b> + ${currentNarrowingKeyLabel()} to click at cursor</div>
+      <div><b>${currentModeConfig().startKey}</b> or <b>Esc</b> to cancel</div>
     `;
   }
 
-  function startSelection() {
+  function startSelection(mode) {
     active = true;
+    selectionMode = mode;
     region = fullScreenRegion();
     orientation = 'h'; // first split left/right
     selectionCount = 0;
+    selectionHistory = [];
     render();
   }
 
@@ -248,13 +318,19 @@
     active = false;
     region = null;
     spaceHeld = false;
+    selectionHistory = [];
     clearOverlay();
     updateHud();
   }
 
   function choose(which) {
     if (!active || !region) return;
-    const chosen = which === 'blue' ? region._blueRegion : region._orangeRegion;
+    const chosen = region._choiceRegions[which];
+
+    selectionHistory.push({
+      region: { x: region.x, y: region.y, w: region.w, h: region.h },
+      orientation
+    });
 
     selectionCount++;
 
@@ -269,11 +345,27 @@
     render();
   }
 
+  function undoSelection() {
+    if (!active || selectionHistory.length === 0) return;
+
+    const previous = selectionHistory.pop();
+    region = previous.region;
+    orientation = previous.orientation;
+    selectionCount = Math.max(0, selectionCount - 1);
+    render();
+  }
+
   function simulateClick(which) {
     if (!active || !region) return;
-    const point = which === 'blue' ? region._blueCenter : region._orangeCenter;
+    const point = region._choiceCenters[which];
     const el = document.elementFromPoint(point.x, point.y);
+    const clickDetails = {
+      totalSelections: selectionCount + 1,
+      narrowingSelections: selectionCount,
+      narrowingKeyLabel: currentNarrowingKeyLabel()
+    };
     if (el) {
+      el._binaryCursorClickDetails = clickDetails;
       const evt = new MouseEvent('click', {
         bubbles: true,
         cancelable: true,
@@ -281,10 +373,14 @@
         clientX: point.x,
         clientY: point.y
       });
-      el.dispatchEvent(evt);
+      try {
+        el.dispatchEvent(evt);
+      } finally {
+        delete el._binaryCursorClickDetails;
+      }
     }
     // the click itself counts as the final selection
-    lastClickCount = selectionCount + 1;
+    lastClickCount = clickDetails.totalSelections;
     cancelSelection();
   }
 
@@ -294,8 +390,18 @@
     if (e.repeat) return;
 
     if (e.key === 'a' || e.key === 'A') {
-      if (!active) {
-        startSelection();
+      if (active) {
+        cancelSelection();
+      } else {
+        startSelection('binary');
+      }
+      return;
+    }
+    if (e.key === 's' || e.key === 'S') {
+      if (active) {
+        cancelSelection();
+      } else {
+        startSelection('ternary');
       }
       return;
     }
@@ -310,19 +416,19 @@
     }
     if (!active) return;
 
-    if (e.key === 'j' || e.key === 'J') {
+    if (e.key === 'h' || e.key === 'H') {
+      e.preventDefault();
+      undoSelection();
+      return;
+    }
+
+    const choice = currentChoices().find((currentChoice) => currentChoice.key === e.key.toLowerCase());
+    if (choice) {
       e.preventDefault();
       if (spaceHeld) {
-        simulateClick('blue');
+        simulateClick(choice.id);
       } else {
-        choose('blue');
-      }
-    } else if (e.key === 'k' || e.key === 'K') {
-      e.preventDefault();
-      if (spaceHeld) {
-        simulateClick('orange');
-      } else {
-        choose('orange');
+        choose(choice.id);
       }
     }
   });
@@ -343,6 +449,7 @@
       region = fullScreenRegion();
       orientation = 'h';
       selectionCount = 0;
+      selectionHistory = [];
       render();
     }
   });
