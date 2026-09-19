@@ -100,11 +100,11 @@
   <h1>Binary Mouse Selector — Prototype</h1>
   <p>Press <b>a</b> to start narrowing in. <b>j</b> = blue, <b>k</b> = orange. Hold <b>Space</b> + j/k to click. <b>Esc</b> to cancel.</p>
   <p>Click targets below to test the simulated click:</p>
-  <button onclick="alert('Button 1 clicked!')">Button 1</button>
-  <button onclick="alert('Button 2 clicked!')">Button 2</button>
-  <button onclick="alert('Button 3 clicked!')">Button 3</button>
+  <button onclick="showDemoButtonAlert('Button 1', this)">Button 1</button>
+  <button onclick="showDemoButtonAlert('Button 2', this)">Button 2</button>
+  <button onclick="showDemoButtonAlert('Button 3', this)">Button 3</button>
   <p style="margin-top:400px;">More content further down the page…</p>
-  <button onclick="alert('Bottom button clicked!')">Bottom Button</button>
+  <button onclick="showDemoButtonAlert('Bottom button', this)">Bottom Button</button>
 </main>
 
 <div id="overlay"></div>
@@ -154,6 +154,22 @@
     overlay.innerHTML = '';
     blueEl = orangeEl = blueCursor = orangeCursor = null;
   }
+
+  window.showDemoButtonAlert = function (label, buttonEl) {
+    const clickDetails = buttonEl._binaryCursorClickDetails;
+    if (clickDetails) {
+      const narrowingLabel = clickDetails.narrowingSelections === 1 ? 'selection' : 'selections';
+      const totalLabel = clickDetails.totalSelections === 1 ? 'selection' : 'selections';
+      alert(
+        `${label} clicked! ` +
+        `Total selections: ${clickDetails.totalSelections} ${totalLabel} ` +
+        `(${clickDetails.narrowingSelections} j/k narrowing ${narrowingLabel} + 1 final click).`
+      );
+      return;
+    }
+
+    alert(`${label} clicked!`);
+  };
 
   function render() {
     clearOverlay();
@@ -273,7 +289,12 @@
     if (!active || !region) return;
     const point = which === 'blue' ? region._blueCenter : region._orangeCenter;
     const el = document.elementFromPoint(point.x, point.y);
+    const clickDetails = {
+      totalSelections: selectionCount + 1,
+      narrowingSelections: selectionCount
+    };
     if (el) {
+      el._binaryCursorClickDetails = clickDetails;
       const evt = new MouseEvent('click', {
         bubbles: true,
         cancelable: true,
@@ -281,10 +302,14 @@
         clientX: point.x,
         clientY: point.y
       });
-      el.dispatchEvent(evt);
+      try {
+        el.dispatchEvent(evt);
+      } finally {
+        delete el._binaryCursorClickDetails;
+      }
     }
     // the click itself counts as the final selection
-    lastClickCount = selectionCount + 1;
+    lastClickCount = clickDetails.totalSelections;
     cancelSelection();
   }
 
