@@ -98,7 +98,7 @@
 
 <main>
   <h1>Binary Mouse Selector — Prototype</h1>
-  <p>Press <b>a</b> to start narrowing in. <b>j</b> = blue, <b>k</b> = orange. Hold <b>Space</b> + j/k to click. <b>Esc</b> to cancel.</p>
+  <p>Press <b>a</b> to start narrowing in. Press <b>a</b> again or <b>Esc</b> to cancel. <b>j</b> = blue, <b>k</b> = orange, <b>h</b> = undo. Hold <b>Space</b> + j/k to click.</p>
   <p>Click targets below to test the simulated click:</p>
   <button onclick="showDemoButtonAlert('Button 1', this)">Button 1</button>
   <button onclick="showDemoButtonAlert('Button 2', this)">Button 2</button>
@@ -123,6 +123,7 @@
   let spaceHeld = false;
   let selectionCount = 0;      // number of j/k narrowing choices made so far
   let lastClickCount = null;   // count reported after most recent simulated click
+  let selectionHistory = [];   // prior regions/orientations for undo
 
   let blueEl, orangeEl, blueCursor, orangeCursor;
 
@@ -246,9 +247,10 @@
     hud.innerHTML = `
       <div class="active">Selecting… (<span class="count">${selectionCount}</span> so far)</div>
       <div><b>j</b> = blue &nbsp; <b>k</b> = orange</div>
+      <div><b>h</b> = undo last narrowing step</div>
       <div>Split axis: <b>${orientation === 'h' ? 'left / right' : 'top / bottom'}</b></div>
       <div>Hold <b>Space</b> + j/k to click at cursor</div>
-      <div><b>Esc</b> to cancel</div>
+      <div><b>a</b> or <b>Esc</b> to cancel</div>
     `;
   }
 
@@ -257,6 +259,7 @@
     region = fullScreenRegion();
     orientation = 'h'; // first split left/right
     selectionCount = 0;
+    selectionHistory = [];
     render();
   }
 
@@ -264,6 +267,7 @@
     active = false;
     region = null;
     spaceHeld = false;
+    selectionHistory = [];
     clearOverlay();
     updateHud();
   }
@@ -271,6 +275,11 @@
   function choose(which) {
     if (!active || !region) return;
     const chosen = which === 'blue' ? region._blueRegion : region._orangeRegion;
+
+    selectionHistory.push({
+      region: { x: region.x, y: region.y, w: region.w, h: region.h },
+      orientation
+    });
 
     selectionCount++;
 
@@ -282,6 +291,16 @@
 
     region = chosen;
     orientation = orientation === 'h' ? 'v' : 'h';
+    render();
+  }
+
+  function undoSelection() {
+    if (!active || selectionHistory.length === 0) return;
+
+    const previous = selectionHistory.pop();
+    region = previous.region;
+    orientation = previous.orientation;
+    selectionCount = Math.max(0, selectionCount - 1);
     render();
   }
 
@@ -319,7 +338,9 @@
     if (e.repeat) return;
 
     if (e.key === 'a' || e.key === 'A') {
-      if (!active) {
+      if (active) {
+        cancelSelection();
+      } else {
         startSelection();
       }
       return;
@@ -342,6 +363,9 @@
       } else {
         choose('blue');
       }
+    } else if (e.key === 'h' || e.key === 'H') {
+      e.preventDefault();
+      undoSelection();
     } else if (e.key === 'k' || e.key === 'K') {
       e.preventDefault();
       if (spaceHeld) {
@@ -368,6 +392,7 @@
       region = fullScreenRegion();
       orientation = 'h';
       selectionCount = 0;
+      selectionHistory = [];
       render();
     }
   });
