@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Binary Mouse Selector Prototype</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+    font-family: system-ui, sans-serif;
+    background: #111;
+  }
+
+  #overlay {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 999999;
+  }
+
+  .region {
+    position: absolute;
+    box-sizing: border-box;
+    transition: background-color 0.08s linear, filter 0.08s linear;
+  }
+
+  /* Blue = left/top choice, Orange = right/bottom choice */
+  .region.blue {
+    background: rgba(30, 120, 255, 0.28);
+    outline: 2px solid rgba(30, 120, 255, 0.8);
+  }
+  .region.orange {
+    background: rgba(255, 140, 30, 0.28);
+    outline: 2px solid rgba(255, 140, 30, 0.8);
+  }
+  .region.dim {
+    background: rgba(120, 120, 120, 0.15);
+    filter: grayscale(60%) brightness(0.7);
+  }
+
+  .cursor {
+    position: absolute;
+    width: 22px;
+    height: 22px;
+    margin-left: -11px;
+    margin-top: -11px;
+    border-radius: 50%;
+    border: 3px solid white;
+    box-shadow: 0 0 6px rgba(0,0,0,0.6);
+    pointer-events: none;
+  }
+  .cursor.blue { background: #1e78ff; }
+  .cursor.orange { background: #ff8c1e; }
+  .cursor::after {
+    content: '';
+    position: absolute;
+    inset: -6px;
+    border-radius: 50%;
+    border: 1px dashed rgba(255,255,255,0.6);
+  }
+
+  #hud {
+    position: fixed;
+    top: 12px;
+    left: 12px;
+    z-index: 1000000;
+    background: rgba(0,0,0,0.7);
+    color: #eee;
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-size: 13px;
+    line-height: 1.5;
+    max-width: 320px;
+    pointer-events: none;
+  }
+  #hud b { color: #fff; }
+  #hud .active { color: #7CFC7C; font-weight: bold; }
+  #hud .count { color: #ffd27c; font-weight: bold; }
+
+  /* demo page content so there's something to click */
+  main {
+    padding: 60px;
+    color: #ddd;
+  }
+  main h1 { color: #fff; }
+  button {
+    margin: 6px;
+    padding: 10px 16px;
+    font-size: 14px;
+    cursor: pointer;
+  }
+</style>
+</head>
+<body>
+
+<main>
+  <h1>Binary Mouse Selector — Prototype</h1>
+  <p>Press <b>a</b> to start narrowing in. <b>j</b> = blue, <b>k</b> = orange. Hold <b>Space</b> + j/k to click. <b>Esc</b> to cancel.</p>
+  <p>Click targets below to test the simulated click:</p>
+  <button onclick="alert('Button 1 clicked!')">Button 1</button>
+  <button onclick="alert('Button 2 clicked!')">Button 2</button>
+  <button onclick="alert('Button 3 clicked!')">Button 3</button>
+  <p style="margin-top:400px;">More content further down the page…</p>
+  <button onclick="alert('Bottom button clicked!')">Bottom Button</button>
+</main>
+
+<div id="overlay"></div>
+<div id="hud">
+  <div>Press <b>a</b> to begin.</div>
+</div>
+
+<script>
+(function () {
+  const overlay = document.getElementById('overlay');
+  const hud = document.getElementById('hud');
+
+  let active = false;          // are we currently narrowing?
+  let region = null;           // {x, y, w, h} current bounding region
+  let orientation = 'h';       // 'h' = split left/right, 'v' = split top/bottom
+  let spaceHeld = false;
+  let selectionCount = 0;      // number of j/k narrowing choices made so far
+  let lastClickCount = null;   // count reported after most recent simulated click
+
+  let blueEl, orangeEl, blueCursor, orangeCursor;
+
+  function fullScreenRegion() {
+    return { x: 0, y: 0, w: window.innerWidth, h: window.innerHeight };
+  }
+
+  function splitRegion(r, orient) {
+    if (orient === 'h') {
+      const halfW = r.w / 2;
+      return [
+        { x: r.x, y: r.y, w: halfW, h: r.h },          // blue = left
+        { x: r.x + halfW, y: r.y, w: r.w - halfW, h: r.h } // orange = right
+      ];
+    } else {
+      const halfH = r.h / 2;
+      return [
+        { x: r.x, y: r.y, w: r.w, h: halfH },          // blue = top
+        { x: r.x, y: r.y + halfH, w: r.w, h: r.h - halfH } // orange = bottom
+      ];
+    }
+  }
+
+  function center(r) {
+    return { x: r.x + r.w / 2, y: r.y + r.h / 2 };
+  }
+
+  function clearOverlay() {
+    overlay.innerHTML = '';
+    blueEl = orangeEl = blueCursor = orangeCursor = null;
+  }
+
+  function render() {
+    clearOverlay();
+
+    if (!active || !region) {
+      updateHud();
+      return;
+    }
+
+    // Dim background covering full screen (outside current region context is implicit,
+    // since region itself always covers remaining candidate space)
+    const dimEl = document.createElement('div');
+    dimEl.className = 'region dim';
+    dimEl.style.left = '0px';
+    dimEl.style.top = '0px';
+    dimEl.style.width = window.innerWidth + 'px';
+    dimEl.style.height = window.innerHeight + 'px';
+    overlay.appendChild(dimEl);
+
+    const [blueRegion, orangeRegion] = splitRegion(region, orientation);
+
+    blueEl = document.createElement('div');
+    blueEl.className = 'region blue';
+    Object.assign(blueEl.style, {
+      left: blueRegion.x + 'px', top: blueRegion.y + 'px',
+      width: blueRegion.w + 'px', height: blueRegion.h + 'px'
+    });
+    overlay.appendChild(blueEl);
+
+    orangeEl = document.createElement('div');
+    orangeEl.className = 'region orange';
+    Object.assign(orangeEl.style, {
+      left: orangeRegion.x + 'px', top: orangeRegion.y + 'px',
+      width: orangeRegion.w + 'px', height: orangeRegion.h + 'px'
+    });
+    overlay.appendChild(orangeEl);
+
+    const bc = center(blueRegion);
+    const oc = center(orangeRegion);
+
+    blueCursor = document.createElement('div');
+    blueCursor.className = 'cursor blue';
+    blueCursor.style.left = bc.x + 'px';
+    blueCursor.style.top = bc.y + 'px';
+    overlay.appendChild(blueCursor);
+
+    orangeCursor = document.createElement('div');
+    orangeCursor.className = 'cursor orange';
+    orangeCursor.style.left = oc.x + 'px';
+    orangeCursor.style.top = oc.y + 'px';
+    overlay.appendChild(orangeCursor);
+
+    // stash for click simulation
+    region._blueCenter = bc;
+    region._orangeCenter = oc;
+    region._blueRegion = blueRegion;
+    region._orangeRegion = orangeRegion;
+
+    updateHud();
+  }
+
+  function updateHud() {
+    if (!active) {
+      if (lastClickCount !== null) {
+        hud.innerHTML = `
+          <div>Last click took <span class="count">${lastClickCount}</span> selection${lastClickCount === 1 ? '' : 's'}.</div>
+          <div>Press <b>a</b> to begin.</div>
+        `;
+      } else {
+        hud.innerHTML = `<div>Press <b>a</b> to begin.</div>`;
+      }
+      return;
+    }
+    hud.innerHTML = `
+      <div class="active">Selecting… (<span class="count">${selectionCount}</span> so far)</div>
+      <div><b>j</b> = blue &nbsp; <b>k</b> = orange</div>
+      <div>Split axis: <b>${orientation === 'h' ? 'left / right' : 'top / bottom'}</b></div>
+      <div>Hold <b>Space</b> + j/k to click at cursor</div>
+      <div><b>Esc</b> to cancel</div>
+    `;
+  }
+
+  function startSelection() {
+    active = true;
+    region = fullScreenRegion();
+    orientation = 'h'; // first split left/right
+    selectionCount = 0;
+    render();
+  }
+
+  function cancelSelection() {
+    active = false;
+    region = null;
+    spaceHeld = false;
+    clearOverlay();
+    updateHud();
+  }
+
+  function choose(which) {
+    if (!active || !region) return;
+    const chosen = which === 'blue' ? region._blueRegion : region._orangeRegion;
+
+    selectionCount++;
+
+    // stop narrowing once region is trivially small
+    if (chosen.w < 4 || chosen.h < 4) {
+      cancelSelection();
+      return;
+    }
+
+    region = chosen;
+    orientation = orientation === 'h' ? 'v' : 'h';
+    render();
+  }
+
+  function simulateClick(which) {
+    if (!active || !region) return;
+    const point = which === 'blue' ? region._blueCenter : region._orangeCenter;
+    const el = document.elementFromPoint(point.x, point.y);
+    if (el) {
+      const evt = new MouseEvent('click', {
+        bubbles: true,
+        cancelable: true,
+        view: window,
+        clientX: point.x,
+        clientY: point.y
+      });
+      el.dispatchEvent(evt);
+    }
+    // the click itself counts as the final selection
+    lastClickCount = selectionCount + 1;
+    cancelSelection();
+  }
+
+  window.addEventListener('keydown', (e) => {
+    // Ignore key auto-repeat entirely so holding a key can't fire choose()/simulateClick()
+    // multiple times or unexpectedly cancel/advance the sequence.
+    if (e.repeat) return;
+
+    if (e.key === 'a' || e.key === 'A') {
+      if (!active) {
+        startSelection();
+      }
+      return;
+    }
+    if (e.code === 'Space') {
+      spaceHeld = true;
+      e.preventDefault();
+      return;
+    }
+    if (e.key === 'Escape') {
+      cancelSelection();
+      return;
+    }
+    if (!active) return;
+
+    if (e.key === 'j' || e.key === 'J') {
+      e.preventDefault();
+      if (spaceHeld) {
+        simulateClick('blue');
+      } else {
+        choose('blue');
+      }
+    } else if (e.key === 'k' || e.key === 'K') {
+      e.preventDefault();
+      if (spaceHeld) {
+        simulateClick('orange');
+      } else {
+        choose('orange');
+      }
+    }
+  });
+
+  window.addEventListener('keyup', (e) => {
+    if (e.code === 'Space') spaceHeld = false;
+  });
+
+  // If the window/tab loses focus while space is held, the keyup can be missed,
+  // leaving spaceHeld stuck true and causing j/k to unexpectedly trigger a click
+  // instead of narrowing the selection. Reset on blur to avoid that stuck state.
+  window.addEventListener('blur', () => {
+    spaceHeld = false;
+  });
+
+  window.addEventListener('resize', () => {
+    if (active) {
+      region = fullScreenRegion();
+      orientation = 'h';
+      selectionCount = 0;
+      render();
+    }
+  });
+
+  render();
+})();
+</script>
+
+</body>
+</html>
