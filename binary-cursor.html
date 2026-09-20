@@ -97,20 +97,119 @@
     font-size: 14px;
     cursor: pointer;
   }
+
+  #moving-target {
+    position: fixed;
+    z-index: 500;
+    background: #2fa84f;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+  }
+  #moving-target:hover {
+    background: #38c65e;
+  }
+
+  #stats-controls {
+    position: fixed;
+    bottom: 16px;
+    left: 16px;
+    z-index: 500;
+  }
+  #show-distribution {
+    background: #444;
+    color: #fff;
+    border: 1px solid #666;
+    border-radius: 6px;
+  }
+  #show-distribution:hover {
+    background: #555;
+  }
+
+  #distribution-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 2000000;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0,0,0,0.65);
+  }
+  #distribution-modal.open {
+    display: flex;
+  }
+  #distribution-panel {
+    background: #1a1a1a;
+    border: 1px solid #444;
+    border-radius: 10px;
+    padding: 20px;
+    color: #eee;
+    max-width: 90vw;
+    max-height: 90vh;
+    overflow: auto;
+  }
+  #distribution-panel h2 {
+    margin-top: 0;
+    color: #fff;
+    font-size: 16px;
+  }
+  #distribution-panel .legend {
+    font-size: 12px;
+    margin-bottom: 8px;
+  }
+  #distribution-panel .legend span {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+    margin-right: 4px;
+    vertical-align: middle;
+  }
+  #distribution-close {
+    margin-top: 12px;
+    background: #444;
+    color: #fff;
+    border: 1px solid #666;
+    border-radius: 6px;
+  }
+  #distribution-close:hover {
+    background: #555;
+  }
+  #distribution-stats {
+    font-size: 12px;
+    color: #ccc;
+    margin-top: 8px;
+    white-space: pre-line;
+  }
 </style>
 </head>
 <body>
 
 <main>
   <h1>Binary Mouse Selector — Prototype</h1>
-  <p>Press <b>a</b> for two-way narrowing or <b>s</b> for three-way narrowing. Press the active start key again or <b>Esc</b> to cancel. <b>j</b> = blue, <b>k</b> = orange, <b>l</b> = magenta, <b>h</b> = undo. Hold <b>Space</b> + j/k/l to click.</p>
-  <p>Click targets below to test the simulated click:</p>
-  <button onclick="showDemoButtonAlert('Button 1', this)">Button 1</button>
-  <button onclick="showDemoButtonAlert('Button 2', this)">Button 2</button>
-  <button onclick="showDemoButtonAlert('Button 3', this)">Button 3</button>
-  <p style="margin-top:400px;">More content further down the page…</p>
-  <button onclick="showDemoButtonAlert('Bottom button', this)">Bottom Button</button>
+  <p>Press <b>a</b> for two-way narrowing or <b>s</b> for three-way narrowing. Press the active start key again or <b>Esc</b> to cancel. <b>j</b> = blue, <b>k</b> = orange, <b>l</b> = magenta, <b>h</b> = undo.</p>
+  <p>Click the moving target below to test the simulated click — it will jump to a new random spot each time:</p>
 </main>
+
+<button id="moving-target" onclick="showDemoButtonAlert('Moving target', this)">Click me!</button>
+
+<div id="stats-controls">
+  <button id="show-distribution" onclick="openDistributionModal()">Show click count distribution</button>
+</div>
+
+<div id="distribution-modal">
+  <div id="distribution-panel">
+    <h2>Narrowing selections per click</h2>
+    <div class="legend">
+      <span style="background:#1e78ff;"></span>a (binary) &nbsp;&nbsp;
+      <span style="background:#ff8c1e;"></span>s (ternary)
+    </div>
+    <canvas id="distribution-canvas" width="480" height="260"></canvas>
+    <div id="distribution-stats"></div>
+    <button id="distribution-close" onclick="closeDistributionModal()">Close</button>
+  </div>
+</div>
 
 <div id="overlay"></div>
 <div id="hud">
@@ -121,6 +220,10 @@
 (function () {
   const overlay = document.getElementById('overlay');
   const hud = document.getElementById('hud');
+  const movingTarget = document.getElementById('moving-target');
+  const distributionModal = document.getElementById('distribution-modal');
+  const distributionCanvas = document.getElementById('distribution-canvas');
+  const distributionStats = document.getElementById('distribution-stats');
 
   let active = false;          // are we currently narrowing?
   let region = null;           // {x, y, w, h} current bounding region
@@ -130,6 +233,39 @@
   let selectionCount = 0;      // number of j/k narrowing choices made so far
   let lastClickCount = null;   // count reported after most recent simulated click
   let selectionHistory = [];   // prior regions/orientations for undo
+  let distributionModalOpen = false;
+
+  const CLICK_LOG_STORAGE_KEY = 'binaryCursorClickCounts';
+
+  // Log of narrowing-selection counts, kept separate per start key (a = binary, s = ternary).
+  let clickCounts = { binary: [], ternary: [] };
+
+  function loadClickCounts() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(CLICK_LOG_STORAGE_KEY));
+      if (saved && Array.isArray(saved.binary) && Array.isArray(saved.ternary)) {
+        clickCounts = saved;
+      }
+    } catch (err) {
+      // ignore malformed/missing storage
+    }
+  }
+
+  function saveClickCounts() {
+    try {
+      localStorage.setItem(CLICK_LOG_STORAGE_KEY, JSON.stringify(clickCounts));
+    } catch (err) {
+      // ignore storage failures (e.g. private browsing quota)
+    }
+  }
+
+  function recordClick(mode, narrowingSelections) {
+    if (!clickCounts[mode]) clickCounts[mode] = [];
+    clickCounts[mode].push(narrowingSelections);
+    saveClickCounts();
+  }
+
+  loadClickCounts();
 
   const selectionModes = {
     binary: {
@@ -215,8 +351,23 @@
     overlay.innerHTML = '';
   }
 
+  function moveTargetRandomly() {
+    const margin = 16;
+    const width = movingTarget.offsetWidth || 100;
+    const height = movingTarget.offsetHeight || 44;
+    const maxX = Math.max(margin, window.innerWidth - width - margin);
+    const maxY = Math.max(margin, window.innerHeight - height - margin);
+    const x = margin + Math.random() * (maxX - margin);
+    const y = margin + Math.random() * (maxY - margin);
+    movingTarget.style.left = x + 'px';
+    movingTarget.style.top = y + 'px';
+  }
+
   window.showDemoButtonAlert = function (label, buttonEl) {
     const clickDetails = buttonEl._binaryCursorClickDetails;
+    if (buttonEl === movingTarget) {
+      moveTargetRandomly();
+    }
     if (clickDetails) {
       const narrowingLabel = clickDetails.narrowingSelections === 1 ? 'selection' : 'selections';
       const totalLabel = clickDetails.totalSelections === 1 ? 'selection' : 'selections';
@@ -364,6 +515,7 @@
       narrowingSelections: selectionCount,
       narrowingKeyLabel: currentNarrowingKeyLabel()
     };
+    recordClick(selectionMode, clickDetails.narrowingSelections);
     if (el) {
       el._binaryCursorClickDetails = clickDetails;
       const evt = new MouseEvent('click', {
@@ -384,10 +536,135 @@
     cancelSelection();
   }
 
+  function buildHistogram(values) {
+    const counts = {};
+    values.forEach((v) => {
+      counts[v] = (counts[v] || 0) + 1;
+    });
+    return counts;
+  }
+
+  function drawDistribution() {
+    const ctx = distributionCanvas.getContext('2d');
+    const w = distributionCanvas.width;
+    const h = distributionCanvas.height;
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = '#111';
+    ctx.fillRect(0, 0, w, h);
+
+    const binaryHist = buildHistogram(clickCounts.binary || []);
+    const ternaryHist = buildHistogram(clickCounts.ternary || []);
+    const allKeys = new Set([
+      ...Object.keys(binaryHist).map(Number),
+      ...Object.keys(ternaryHist).map(Number)
+    ]);
+
+    if (allKeys.size === 0) {
+      ctx.fillStyle = '#888';
+      ctx.font = '13px system-ui, sans-serif';
+      ctx.fillText('No clicks logged yet. Use Space + j/k/l to simulate clicks.', 12, h / 2);
+      distributionStats.textContent = '';
+      return;
+    }
+
+    const maxBucket = Math.max(...allKeys);
+    const minBucket = Math.min(0, ...allKeys);
+    const buckets = [];
+    for (let i = minBucket; i <= maxBucket; i++) buckets.push(i);
+
+    const maxCount = Math.max(
+      1,
+      ...buckets.map((b) => Math.max(binaryHist[b] || 0, ternaryHist[b] || 0))
+    );
+
+    const paddingLeft = 34;
+    const paddingBottom = 22;
+    const paddingTop = 10;
+    const plotW = w - paddingLeft - 10;
+    const plotH = h - paddingBottom - paddingTop;
+    const groupW = plotW / buckets.length;
+    const barW = Math.max(4, groupW / 2 - 4);
+
+    // axes
+    ctx.strokeStyle = '#555';
+    ctx.beginPath();
+    ctx.moveTo(paddingLeft, paddingTop);
+    ctx.lineTo(paddingLeft, paddingTop + plotH);
+    ctx.lineTo(paddingLeft + plotW, paddingTop + plotH);
+    ctx.stroke();
+
+    ctx.fillStyle = '#aaa';
+    ctx.font = '10px system-ui, sans-serif';
+    ctx.textAlign = 'right';
+    const ySteps = 4;
+    for (let i = 0; i <= ySteps; i++) {
+      const val = Math.round((maxCount / ySteps) * i);
+      const y = paddingTop + plotH - (plotH * i) / ySteps;
+      ctx.fillText(String(val), paddingLeft - 6, y + 3);
+      ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+      ctx.beginPath();
+      ctx.moveTo(paddingLeft, y);
+      ctx.lineTo(paddingLeft + plotW, y);
+      ctx.stroke();
+    }
+
+    ctx.textAlign = 'center';
+    buckets.forEach((b, idx) => {
+      const groupX = paddingLeft + idx * groupW;
+      const bCount = binaryHist[b] || 0;
+      const tCount = ternaryHist[b] || 0;
+
+      const bHeight = (bCount / maxCount) * plotH;
+      const tHeight = (tCount / maxCount) * plotH;
+
+      ctx.fillStyle = '#1e78ff';
+      ctx.fillRect(groupX + 2, paddingTop + plotH - bHeight, barW, bHeight);
+
+      ctx.fillStyle = '#ff8c1e';
+      ctx.fillRect(groupX + barW + 6, paddingTop + plotH - tHeight, barW, tHeight);
+
+      ctx.fillStyle = '#ccc';
+      ctx.fillText(String(b), groupX + groupW / 2, paddingTop + plotH + 14);
+    });
+
+    const summarize = (arr) => {
+      if (!arr || arr.length === 0) return 'n=0';
+      const sum = arr.reduce((a, v) => a + v, 0);
+      const mean = (sum / arr.length).toFixed(2);
+      return `n=${arr.length}, mean=${mean}`;
+    };
+
+    distributionStats.textContent =
+      `a (binary): ${summarize(clickCounts.binary)}\n` +
+      `s (ternary): ${summarize(clickCounts.ternary)}`;
+  }
+
+  window.openDistributionModal = function () {
+    distributionModalOpen = true;
+    distributionModal.classList.add('open');
+    drawDistribution();
+  };
+
+  window.closeDistributionModal = function () {
+    distributionModalOpen = false;
+    distributionModal.classList.remove('open');
+  };
+
+  distributionModal.addEventListener('click', (e) => {
+    if (e.target === distributionModal) {
+      closeDistributionModal();
+    }
+  });
+
   window.addEventListener('keydown', (e) => {
     // Ignore key auto-repeat entirely so holding a key can't fire choose()/simulateClick()
     // multiple times or unexpectedly cancel/advance the sequence.
     if (e.repeat) return;
+
+    if (e.key === 'Escape' && distributionModalOpen) {
+      closeDistributionModal();
+      return;
+    }
 
     if (e.key === 'a' || e.key === 'A') {
       if (active) {
@@ -454,6 +731,7 @@
     }
   });
 
+  moveTargetRandomly();
   render();
 })();
 </script>
